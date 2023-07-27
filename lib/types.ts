@@ -224,8 +224,10 @@ export interface ICallbacks {
      Example
 
      proxy.onAuthenticate(function(ctx, credentials, callback) {
-           console.log(`Authenticate: ${credentials}`);
-           return callback(null, true); // 'true' to allow, 'false' to deny
+           if (!credentials.startsWith('Basic ')) return callback("Basic authentication is required.");
+           const decoded = Buffer.from(credentials.replace('Basic ', ''), 'base64').toString();
+           const [username, password] = decoded.split(':');
+           return callback(null, username === 'example'); // only allow example user to access.
          });
    */
   onAuthenticate(fcn: OnAuthenticateParams): void;
