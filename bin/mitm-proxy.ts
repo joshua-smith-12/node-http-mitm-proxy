@@ -27,7 +27,7 @@ if (args.help) {
 proxy.onError((ctx, err, errorKind) => {
   debug(errorKind, err);
 });
-proxy.listen(args, (err) => {
+proxy.listen({ port: args.port, host: args.host as string }, (err) => {
   if (err) {
     debug(`Failed to start listening on port ${args.port}`, err);
     process.exit(1);
