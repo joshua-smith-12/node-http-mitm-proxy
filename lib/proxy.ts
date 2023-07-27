@@ -47,6 +47,7 @@ import type {
   OnWebSocketSendParams,
   IWebSocketCallback,
   OnRequestDataCallback,
+  OnAuthenticateParams,
 } from "./types";
 import type stream from "node:stream";
 export { wildcard, gunzip };
@@ -73,6 +74,7 @@ export class Proxy implements IProxy {
   keepAlive!: boolean;
   onConnectHandlers: HandlerType<IProxy["onConnect"]>;
   onErrorHandlers: HandlerType<IProxy["onError"]>;
+  onAuthenticateHandlers: HandlerType<IProxy["onAuthenticate"]>;
   onRequestDataHandlers: HandlerType<IProxy["onRequestData"]>;
   onRequestEndHandlers: HandlerType<IProxy["onRequestEnd"]>;
   onRequestHandlers: HandlerType<IProxy["onRequest"]>;
@@ -93,6 +95,7 @@ export class Proxy implements IProxy {
   timeout!: number;
   wsServer: WebSocketServer | undefined;
   wssServer: WebSocketServer | undefined;
+  authenticated!: boolean;
   static wildcard = wildcard;
   static gunzip = gunzip;
 
@@ -111,6 +114,7 @@ export class Proxy implements IProxy {
     this.onResponseHeadersHandlers = [];
     this.onResponseDataHandlers = [];
     this.onResponseEndHandlers = [];
+    this.onAuthenticateHandlers = [];
     this.responseContentPotentiallyModified = false;
   }
 
@@ -137,6 +141,7 @@ export class Proxy implements IProxy {
     this.httpsPort = this.forceSNI ? options.httpsPort : undefined;
     this.sslCaDir =
       options.sslCaDir || path.resolve(process.cwd(), ".http-mitm-proxy");
+    this.authenticated = !!options.authenticated;
     ca.create(this.sslCaDir, (err, ca) => {
       if (err) {
         return callback(err);
@@ -351,6 +356,11 @@ export class Proxy implements IProxy {
 
   onResponseEnd(fn: OnRequestParams) {
     this.onResponseEndHandlers.push(fn);
+    return this;
+  }
+
+  onAuthenticate(fn: OnAuthenticateParams) {
+    this.onAuthenticateHandlers.push(fn);
     return this;
   }
 
@@ -953,6 +963,7 @@ export class Proxy implements IProxy {
       onResponseHandlers: [],
       onResponseDataHandlers: [],
       onResponseEndHandlers: [],
+      onAuthenticateHandlers: [],
       requestFilters: [],
       responseFilters: [],
       responseContentPotentiallyModified: false,
@@ -997,6 +1008,10 @@ export class Proxy implements IProxy {
         ctx.onResponseEndHandlers.push(fn);
         return ctx;
       },
+      onAuthenticate(fn) {
+        ctx.onAuthenticateHandlers.push(fn);
+        return ctx;
+      },
       addResponseFilter(filter) {
         ctx.responseFilters.push(filter);
         ctx.responseContentPotentiallyModified = true;
@@ -1038,6 +1053,13 @@ export class Proxy implements IProxy {
       ctx.clientToProxyRequest,
       ctx.isSSL ? 443 : 80
     );
+
+    function requireAuthentication() {
+      ctx.clientToProxyRequest.resume();
+      ctx.proxyToClientResponse.writeHead(407, {'Proxy-Authenticate': 'Basic realm="Authentication Required for Web Proxy"'});
+      return ctx.proxyToClientResponse.end();
+    }
+
     function proxyToServerRequestComplete(
       serverToProxyResponse: http.IncomingMessage
     ) {
@@ -1112,6 +1134,25 @@ export class Proxy implements IProxy {
       ctx.clientToProxyRequest.resume();
     }
 
+    function handleRequest() {
+      return self._onRequest(ctx, (err) => {
+        if (err) {
+          return self._onError("ON_REQUEST_ERROR", ctx, err);
+        }
+        return self._onRequestHeaders(ctx, (err: Error | undefined | null) => {
+          if (err) {
+            return self._onError("ON_REQUESTHEADERS_ERROR", ctx, err);
+          }
+          return makeProxyToServerRequest();
+        });
+      });
+    }
+
+    if (this.authenticated && !ctx.clientToProxyRequest.headers['proxy-authorization']) {
+      // request authentication
+      return requireAuthentication();
+    }
+
     if (hostPort === null) {
       ctx.clientToProxyRequest.resume();
       ctx.proxyToClientResponse.writeHead(400, {
@@ -1138,17 +1179,23 @@ export class Proxy implements IProxy {
         headers,
         agent: ctx.isSSL ? self.httpsAgent : self.httpAgent,
       };
-      return self._onRequest(ctx, (err) => {
-        if (err) {
-          return self._onError("ON_REQUEST_ERROR", ctx, err);
-        }
-        return self._onRequestHeaders(ctx, (err: Error | undefined | null) => {
+
+      if (this.authenticated) {
+        // run authentication callbacks
+        self._onAuthenticate(ctx, (err, authenticated) => {
           if (err) {
-            return self._onError("ON_REQUESTHEADERS_ERROR", ctx, err);
+            return self._onError("ON_AUTHENTICATE_ERROR", ctx, err);
           }
-          return makeProxyToServerRequest();
+          // if any auth callback did not pass, require re-authentication
+          if (!authenticated) {
+            return requireAuthentication();
+          }
+
+          return handleRequest();
         });
-      });
+      } else {
+        return handleRequest();
+      }
     }
   }
 
@@ -1164,6 +1211,24 @@ export class Proxy implements IProxy {
     async.forEach(
       this.onRequestHandlers.concat(ctx.onRequestHandlers),
       (fn, callback) => fn(ctx, callback),
+      callback
+    );
+  }
+
+  _onAuthenticate(ctx: IContext, callback: ErrorCallback) {
+    function checkAuth(previousValue: boolean, fn: Function, callback: ErrorCallback) {
+      const credentials = ctx.clientToProxyRequest.headers['proxy-authorization'];
+      return fn(
+        ctx,
+        credentials,
+        (err?: Error, pass?: boolean) => callback(err, pass && previousValue)
+      );
+    }
+
+    async.reduce(
+      this.onAuthenticateHandlers.concat(ctx.onAuthenticateHandlers),
+      true,
+      checkAuth,
       callback
     );
   }
