@@ -1056,7 +1056,7 @@ export class Proxy implements IProxy {
 
     function requireAuthentication() {
       ctx.clientToProxyRequest.resume();
-      ctx.proxyToClientResponse.writeHead(407, {'Proxy-Authenticate': 'Basic realm="Authenticated Required for Web Proxy"'});
+      ctx.proxyToClientResponse.writeHead(407, {'Proxy-Authenticate': 'Basic realm="Authentication Required for Web Proxy"'});
       return ctx.proxyToClientResponse.end();
     }
 
@@ -1148,7 +1148,7 @@ export class Proxy implements IProxy {
       });
     }
 
-    if (this.authenticated && !ctx.clientToProxyRequest.headers['Proxy-Authorization']) {
+    if (this.authenticated && !ctx.clientToProxyRequest.headers['proxy-authorization']) {
       // request authentication
       return requireAuthentication();
     }
@@ -1217,7 +1217,7 @@ export class Proxy implements IProxy {
 
   _onAuthenticate(ctx: IContext, callback: ErrorCallback) {
     function checkAuth(previousValue: boolean, fn: Function, callback: ErrorCallback) {
-      const credentials = ctx.clientToProxyRequest.headers['Proxy-Authorization'];
+      const credentials = ctx.clientToProxyRequest.headers['proxy-authorization'];
       return fn(
         ctx,
         credentials,
