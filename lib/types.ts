@@ -34,6 +34,8 @@ export interface IProxyOptions {
   httpsPort?: number;
   /** - Setting this option will remove the content-length from the proxy to server request, forcing chunked encoding */
   forceChunkedRequest?: boolean;
+  /** - Setting this option will cause the proxy to issue Proxy-Authenticate requests and use onAuthenticate callbacks */
+  authenticated?: boolean;
 }
 
 export interface IProxySSLServer {
@@ -121,6 +123,10 @@ export type OnConnectParams = (
   head: any,
   callback: ErrorCallback
 ) => void;
+export type OnAuthenticateParams = (
+  ctx: IAuthenticationContext,
+  callback: ErrorCallback
+) => void;
 export type IProxy = ICallbacks & {
   /** Starts the proxy listening on the given port.  example: proxy.listen({ port: 80 }); */
   listen(options?: IProxyOptions, callback?: () => void): void;
@@ -161,6 +167,7 @@ export type IProxy = ICallbacks & {
   httpsPort?: number;
   sslCaDir: string;
   ca: CA;
+  authenticated: boolean;
 };
 
 /** signatures for various callback functions */
@@ -207,6 +214,20 @@ export interface ICallbacks {
   onResponseData(fcn: OnRequestDataParams): void;
 
   onResponseEnd(fcn: OnRequestParams): void;
+
+  /** Adds a function to get called when proxy authentication needs to be verified.
+   
+     Arguments
+
+     fn(ctx, callback) - The function that gets called during authentication.
+     Example
+
+     proxy.onAuthenticate(function(ctx, callback) {
+           console.log(`Authenticate: ${ctx.authParams}`);
+           return callback();
+         });
+   */
+  onAuthenticate(fcn: OnAuthenticateParams): void;
 
   /** Adds a module into the proxy. Modules encapsulate multiple life cycle processing functions into one object.
 
@@ -317,6 +338,7 @@ export type IContext = ICallbacks &
     onResponseEndHandlers: OnRequestParams[];
     onRequestHeadersHandlers: OnRequestParams[];
     onResponseHeadersHandlers: OnRequestParams[];
+    onAuthenticateHandlers: OnAuthenticateParams[];
     responseContentPotentiallyModified: boolean;
   };
 
@@ -324,6 +346,10 @@ export interface ICertficateContext {
   hostname: string;
   files: ICertDetails;
   data: { keyFileExists: boolean; certFileExists: boolean };
+}
+
+export type IAuthenticationContext = IContext & {
+  authParams: string;
 }
 
 export type IWebSocketContext = IBaseContext & {
