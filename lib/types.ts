@@ -124,7 +124,8 @@ export type OnConnectParams = (
   callback: ErrorCallback
 ) => void;
 export type OnAuthenticateParams = (
-  ctx: IAuthenticationContext,
+  ctx: IContext,
+  credentials: string,
   callback: ErrorCallback
 ) => void;
 export type IProxy = ICallbacks & {
@@ -222,9 +223,9 @@ export interface ICallbacks {
      fn(ctx, callback) - The function that gets called during authentication.
      Example
 
-     proxy.onAuthenticate(function(ctx, callback) {
-           console.log(`Authenticate: ${ctx.authParams}`);
-           return callback();
+     proxy.onAuthenticate(function(ctx, credentials, callback) {
+           console.log(`Authenticate: ${credentials}`);
+           return callback(null, true); // 'true' to allow, 'false' to deny
          });
    */
   onAuthenticate(fcn: OnAuthenticateParams): void;
@@ -346,10 +347,6 @@ export interface ICertficateContext {
   hostname: string;
   files: ICertDetails;
   data: { keyFileExists: boolean; certFileExists: boolean };
-}
-
-export type IAuthenticationContext = IContext & {
-  authParams: string;
 }
 
 export type IWebSocketContext = IBaseContext & {

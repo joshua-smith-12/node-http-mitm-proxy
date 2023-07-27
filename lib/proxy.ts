@@ -1054,6 +1054,12 @@ export class Proxy implements IProxy {
       ctx.isSSL ? 443 : 80
     );
 
+    function requireAuthentication() {
+      ctx.clientToProxyRequest.resume();
+      ctx.proxyToClientResponse.writeHead(407, {'Proxy-Authenticate': 'Basic realm="Authenticated Required for Web Proxy"'});
+      return ctx.proxyToClientResponse.end();
+    }
+
     function proxyToServerRequestComplete(
       serverToProxyResponse: http.IncomingMessage
     ) {
@@ -1128,11 +1134,23 @@ export class Proxy implements IProxy {
       ctx.clientToProxyRequest.resume();
     }
 
+    function handleRequest() {
+      return self._onRequest(ctx, (err) => {
+        if (err) {
+          return self._onError("ON_REQUEST_ERROR", ctx, err);
+        }
+        return self._onRequestHeaders(ctx, (err: Error | undefined | null) => {
+          if (err) {
+            return self._onError("ON_REQUESTHEADERS_ERROR", ctx, err);
+          }
+          return makeProxyToServerRequest();
+        });
+      });
+    }
+
     if (this.authenticated && !ctx.clientToProxyRequest.headers['Proxy-Authorization']) {
       // request authentication
-      ctx.clientToProxyRequest.resume();
-      ctx.proxyToClientResponse.writeHead(407, {'Proxy-Authenticate': 'Basic realm="Access to Summoners War Web Proxy"'});
-      return ctx.proxyToClientResponse.end();
+      return requireAuthentication();
     }
 
     if (hostPort === null) {
@@ -1161,17 +1179,23 @@ export class Proxy implements IProxy {
         headers,
         agent: ctx.isSSL ? self.httpsAgent : self.httpAgent,
       };
-      return self._onRequest(ctx, (err) => {
-        if (err) {
-          return self._onError("ON_REQUEST_ERROR", ctx, err);
-        }
-        return self._onRequestHeaders(ctx, (err: Error | undefined | null) => {
+
+      if (this.authenticated) {
+        // run authentication callbacks
+        self._onAuthenticate(ctx, (err, authenticated) => {
           if (err) {
-            return self._onError("ON_REQUESTHEADERS_ERROR", ctx, err);
+            return self._onError("ON_AUTHENTICATE_ERROR", ctx, err);
           }
-          return makeProxyToServerRequest();
+          // if any auth callback did not pass, require re-authentication
+          if (!authenticated) {
+            return requireAuthentication();
+          }
+
+          return handleRequest();
         });
-      });
+      } else {
+        return handleRequest();
+      }
     }
   }
 
@@ -1187,6 +1211,24 @@ export class Proxy implements IProxy {
     async.forEach(
       this.onRequestHandlers.concat(ctx.onRequestHandlers),
       (fn, callback) => fn(ctx, callback),
+      callback
+    );
+  }
+
+  _onAuthenticate(ctx: IContext, callback: ErrorCallback) {
+    function checkAuth(previousValue: boolean, fn: Function, callback: ErrorCallback) {
+      const credentials = ctx.clientToProxyRequest.headers['Proxy-Authorization'];
+      return fn(
+        ctx,
+        credentials,
+        (err?: Error, pass?: boolean) => callback(err, pass && previousValue)
+      );
+    }
+
+    async.reduce(
+      this.onAuthenticateHandlers.concat(ctx.onAuthenticateHandlers),
+      true,
+      checkAuth,
       callback
     );
   }
