@@ -1055,6 +1055,7 @@ export class Proxy implements IProxy {
     function requireAuthentication() {
       ctx.clientToProxyRequest.resume();
       ctx.proxyToClientResponse.writeHead(407, {'Proxy-Authenticate': 'Basic realm="Authentication Required for Web Proxy"'});
+      ctx.proxyToClientResponse.write("Authentication Required for Web Proxy");
       return ctx.proxyToClientResponse.end();
     }
 
